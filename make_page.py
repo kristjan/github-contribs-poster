@@ -137,7 +137,7 @@ __SVG__
 
     if (t.classList.contains("bar")) {
       focus("bar-focus", n => n === t);
-      show([header(d.year), row("contributions", fmt(d.total)),
+      show([header(d.label || d.year), row("contributions", fmt(d.total)),
             row("public repos", fmt(d.pub)), row("private repos", fmt(d.priv))], e);
     } else if (t.classList.contains("layer")) {
       focus("lang-focus", n => n.dataset.lang === d.lang);
@@ -194,9 +194,11 @@ def main():
     for key, value in {"__LOGIN__": meta["login"], "__BG__": meta["bg"], "__FG__": meta["fg"], "__BRIGHT__": meta["bright"],
                        "__MUTED__": meta["muted"], "__BAND__": meta["band"], "__SVG__": svg}.items():
         page = page.replace(key, value)
-    out = HERE / "output" / f"{meta['login']}-github-all-time-{theme}.html"
+    period = meta.get("year") or "all-time"
+    out = HERE / "output" / f"{meta['login']}-github-{period}-{theme}.html"
     out.write_text(page)
     print(f"wrote {out}")
+
 
 
 if __name__ == "__main__":

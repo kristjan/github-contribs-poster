@@ -34,6 +34,7 @@ THEMES = {
 }
 args = argparse.ArgumentParser(description=__doc__.splitlines()[0])
 args.add_argument("theme", nargs="?", default="tokyonight", choices=THEMES)
+args.add_argument("--year", type=int, help="render a single year (e.g. 2024)")
 args.add_argument("--eras", type=Path, default=HERE / "eras.yaml", help="eras file (default: eras.yaml)")
 args.add_argument("--lang-scale", choices=["sqrt", "log", "linear"], default="sqrt",
                   help="height scale for the language chart (default: sqrt)")
@@ -108,15 +109,30 @@ ERAS = load_eras(args.eras)
 FONT = 'system-ui, -apple-system, "Segoe UI", Roboto, Helvetica, Arial, sans-serif'
 MONO = 'ui-monospace, "SF Mono", Menlo, monospace'
 
-by_day = {d: c for d, c in DAYS}
-years = sorted({int(d[:4]) for d, _ in DAYS})
-by_year = {y: 0 for y in years}
-for d, c in DAYS:
-    by_year[int(d[:4])] += c
-total = sum(by_year.values())
-priv_total = sum(PRIV.values())
-peak_day = max(DAYS, key=lambda x: x[1])
-active_days = sum(1 for _, c in DAYS if c)
+available_years = sorted({int(d[:4]) for d, _ in DAYS})
+if args.year:
+    if args.year not in available_years:
+        sys.exit(f"make_poster.py: year {args.year} not found in contributions data (available: {available_years[0]}..{available_years[-1]})")
+    YEAR = args.year
+    DAYS = [d for d in DAYS if d[0].startswith(f"{YEAR}-")]
+    PRIV = {YEAR: PRIV.get(YEAR, 0)}
+    by_day = {d: c for d, c in DAYS}
+    years = [YEAR]
+    total = sum(c for _, c in DAYS)
+    priv_total = PRIV.get(YEAR, 0)
+    peak_day = max(DAYS, key=lambda x: x[1]) if DAYS else ("N/A", 0)
+    active_days = sum(1 for _, c in DAYS if c)
+else:
+    YEAR = None
+    by_day = {d: c for d, c in DAYS}
+    years = available_years
+    by_year = {y: 0 for y in years}
+    for d, c in DAYS:
+        by_year[int(d[:4])] += c
+    total = sum(by_year.values())
+    priv_total = sum(PRIV.values())
+    peak_day = max(DAYS, key=lambda x: x[1])
+    active_days = sum(1 for _, c in DAYS if c)
 
 def streak():
     best = cur = 0
@@ -141,10 +157,12 @@ def text(x, y, s, size=16, fill=T["fg"], anchor="start", weight=400, family=FONT
 # Header
 M = 110
 text(M, 150, LOGIN, 96, T["bright"], weight=700)
-text(M + 190, 150, f"on GitHub · {years[0]} – {years[-1]}", 56, T["fg"], weight=300)
+header_subtitle = f"on GitHub · {YEAR}" if YEAR else f"on GitHub · {years[0]} – {years[-1]}"
+text(M + 190, 150, header_subtitle, 56, T["fg"], weight=300)
+priv_pct = f"{round(100 * priv_total / total)}%" if total else "0%"
 stats = [(f"{total:,}", "contributions"), (f"{active_days:,}", "active days"),
          (f"{streak()}", "day best streak"), (f"{peak_day[1]}", f"peak day · {peak_day[0]}"),
-         (f"{round(100 * priv_total / total)}%", "in private repos")]
+         (priv_pct, "in private repos")]
 sx = M
 for v, label in stats:
     text(sx, 250, v, 44, T["accent"], weight=600)
@@ -154,10 +172,6 @@ for v, label in stats:
 # Skyline
 top, base = 500, 1060
 x0, x1 = M, W - M
-bw = (x1 - x0) / len(years)
-ymax = max(by_year.values())
-scale = (base - top - 60) / ymax
-X = lambda y: x0 + (y - years[0]) * bw
 
 MONTHS = "Jan Feb Mar Apr May Jun Jul Aug Sep Oct Nov Dec".split()
 def frac_year(iso):
@@ -184,18 +198,45 @@ def wrap(s, width, size):
             cur = trial
     return lines + [cur] if cur else lines
 
+if YEAR:
+    by_month = {m: sum(c for d, c in DAYS if int(d[5:7]) == m) for m in range(1, 13)}
+    bw = (x1 - x0) / 12
+    bw_year = x1 - x0
+    ymax = max(by_month.values(), default=1)
+    scale = (base - top - 60) / max(ymax, 1)
+    X = lambda m: x0 + (m - 1) * bw
+else:
+    bw = (x1 - x0) / len(years)
+    bw_year = bw
+    ymax = max(by_year.values(), default=1)
+    scale = (base - top - 60) / max(ymax, 1)
+    X = lambda y: x0 + (y - years[0]) * bw
+
 band_top = top - 110
 for i, (start, end, titles, subs, shares) in enumerate(ERAS):
-    end = end or AS_OF
-    ex = x0 + (frac_year(start) - years[0]) * bw
-    ew = x0 + (frac_year(end) + 1 / 365 - years[0]) * bw - ex
-    era_total = sum(c for d, c in DAYS if start <= d <= end)
-    meta = f"{era_span(start, end)} · {era_total:,}"
+    end_val = end or AS_OF
+    if YEAR:
+        y_start = f"{YEAR}-01-01"
+        y_end = min(f"{YEAR}-12-31", AS_OF)
+        if start > y_end or end_val < y_start:
+            continue
+        s_date = max(dt.date.fromisoformat(start), dt.date(YEAR, 1, 1))
+        e_date = min(dt.date.fromisoformat(end_val), dt.date(YEAR, 12, 31))
+        days_in_year = (dt.date(YEAR + 1, 1, 1) - dt.date(YEAR, 1, 1)).days
+        f_start = (s_date - dt.date(YEAR, 1, 1)).days / days_in_year
+        f_end = (e_date - dt.date(YEAR, 1, 1) + dt.timedelta(days=1)).days / days_in_year
+        ex = x0 + f_start * (x1 - x0)
+        ew = (f_end - f_start) * (x1 - x0)
+    else:
+        ex = x0 + (frac_year(start) - years[0]) * bw
+        ew = x0 + (frac_year(end_val) + 1 / 365 - years[0]) * bw - ex
+    era_total = sum(c for d, c in DAYS if start <= d <= end_val)
+    meta = f"{era_span(start, end_val)} · {era_total:,}"
     if i % 2 == 0 or args.annotate:
         mix = " · ".join(f"{l} {round(v * 100)}%" for l, v in sorted(shares.items(), key=lambda x: -x[1]))
         add(f'<rect x="{ex:.1f}" y="{band_top}" width="{ew:.1f}" height="{base - band_top}" fill="{T["band"]}" '
             f'opacity="{0.55 if i % 2 == 0 else 0}"'
-            f'{tag("era", title=" · ".join(titles), sub=" · ".join(subs), span=era_span(start, end), total=era_total, mix=mix)}/>')
+            f'{tag("era", title=" · ".join(titles), sub=" · ".join(subs), span=era_span(start, end_val), total=era_total, mix=mix)}/>')
     if ew < 110:  # too narrow for stacked labels: run them vertically down the band
         ty = band_top + 16
         side = " · ".join(subs + [meta])
@@ -212,20 +253,43 @@ for i, (start, end, titles, subs, shares) in enumerate(ERAS):
         ty += 2
     text(ex + 14, ty + 2, meta, 15, T["muted"], family=MONO)
 
-for y in years:
-    pv = PRIV[y]; pu = by_year[y] - pv
-    bx = X(y) + bw * 0.16; w = bw * 0.68
-    hp, hu = pv * scale, pu * scale
-    add(f'<g{tag("bar", year=y, total=by_year[y], pub=pu, priv=pv)}>')
-    add(f'<rect x="{bx:.1f}" y="{base - hp:.1f}" width="{w:.1f}" height="{hp:.1f}" fill="{T["priv"]}"/>')
-    add(f'<rect x="{bx:.1f}" y="{base - hp - hu:.1f}" width="{w:.1f}" height="{hu:.1f}" fill="{T["pub"]}"/>')
-    if args.annotate:  # a hover target the full height of the column, so short bars are easy to hit
-        add(f'<rect x="{X(y):.1f}" y="{top - 20}" width="{bw:.1f}" height="{base - top + 20}" fill="transparent"/>')
-    text(bx + w / 2, base - hp - hu - 10, f"{by_year[y]:,}", 16, T["bright"], "middle", family=MONO)
-    add("</g>")
-    text(bx + w / 2, base + 30, f"’{str(y)[2:]}", 18, T["fg"], "middle", family=MONO)
-add(f'<line x1="{x0}" x2="{x1}" y1="{base}" y2="{base}" stroke="{T["muted"]}" stroke-width="1.5"/>')
-text(X(years[-1]) + bw / 2, base + 52, f"through {AS_OF[5:7]}/{AS_OF[8:]}", 14, T["muted"], "middle")
+if YEAR:
+    priv_ratio = priv_total / total if total > 0 else 0
+    for m in range(1, 13):
+        mv = by_month[m]
+        pv = round(mv * priv_ratio)
+        pu = mv - pv
+        bx = X(m) + bw * 0.16
+        w = bw * 0.68
+        hp, hu = pv * scale, pu * scale
+        m_name = MONTHS[m - 1]
+        add(f'<g{tag("bar", year=YEAR, month=m, label=f"{m_name} {YEAR}", total=mv, pub=pu, priv=pv)}>')
+        add(f'<rect x="{bx:.1f}" y="{base - hp:.1f}" width="{w:.1f}" height="{hp:.1f}" fill="{T["priv"]}"/>')
+        add(f'<rect x="{bx:.1f}" y="{base - hp - hu:.1f}" width="{w:.1f}" height="{hu:.1f}" fill="{T["pub"]}"/>')
+        if args.annotate:
+            add(f'<rect x="{X(m):.1f}" y="{top - 20}" width="{bw:.1f}" height="{base - top + 20}" fill="transparent"/>')
+        if mv > 0:
+            text(bx + w / 2, base - hp - hu - 10, f"{mv:,}", 16, T["bright"], "middle", family=MONO)
+        add("</g>")
+        text(bx + w / 2, base + 30, m_name, 18, T["fg"], "middle", family=MONO)
+    add(f'<line x1="{x0}" x2="{x1}" y1="{base}" y2="{base}" stroke="{T["muted"]}" stroke-width="1.5"/>')
+    sub_label = f"through {AS_OF[5:7]}/{AS_OF[8:]}" if YEAR == int(AS_OF[:4]) else "full year"
+    text(X(12) + bw / 2, base + 52, sub_label, 14, T["muted"], "middle")
+else:
+    for y in years:
+        pv = PRIV[y]; pu = by_year[y] - pv
+        bx = X(y) + bw * 0.16; w = bw * 0.68
+        hp, hu = pv * scale, pu * scale
+        add(f'<g{tag("bar", year=y, total=by_year[y], pub=pu, priv=pv)}>')
+        add(f'<rect x="{bx:.1f}" y="{base - hp:.1f}" width="{w:.1f}" height="{hp:.1f}" fill="{T["priv"]}"/>')
+        add(f'<rect x="{bx:.1f}" y="{base - hp - hu:.1f}" width="{w:.1f}" height="{hu:.1f}" fill="{T["pub"]}"/>')
+        if args.annotate:  # a hover target the full height of the column, so short bars are easy to hit
+            add(f'<rect x="{X(y):.1f}" y="{top - 20}" width="{bw:.1f}" height="{base - top + 20}" fill="transparent"/>')
+        text(bx + w / 2, base - hp - hu - 10, f"{by_year[y]:,}", 16, T["bright"], "middle", family=MONO)
+        add("</g>")
+        text(bx + w / 2, base + 30, f"’{str(y)[2:]}", 18, T["fg"], "middle", family=MONO)
+    add(f'<line x1="{x0}" x2="{x1}" y1="{base}" y2="{base}" stroke="{T["muted"]}" stroke-width="1.5"/>')
+    text(X(years[-1]) + bw / 2, base + 52, f"through {AS_OF[5:7]}/{AS_OF[8:]}", 14, T["muted"], "middle")
 
 # Languages: inverted, smoothed, stacked area hanging below the bars, on the same x axis.
 # Each band = commits measured from git history (fetch_languages.py) plus the rest of that
@@ -290,7 +354,7 @@ if layers and stack_max > 0:
     k_h = la_h / hscale(stack_max)
     def thickness(v, i):
         return v / totals[i] * hscale(totals[i]) * k_h if totals[i] > 0 else 0
-    mx = [x0 + (int(k[:4]) - years[0] + (int(k[5:]) - 0.5) / 12) * bw for k in month_keys]
+    mx = [x0 + (int(k[:4]) - years[0] + (int(k[5:]) - 0.5) / 12) * bw_year for k in month_keys]
 
     def curve(ys, reverse=False):
         pts = list(zip(mx, ys))
@@ -337,18 +401,25 @@ else:
     la_bottom = base + 70
 
 # Bar legend: direct labels in the right margin, beside the last bar's two segments.
-last = years[-1]
-seg_priv, seg_pub = PRIV[last] * scale, (by_year[last] - PRIV[last]) * scale
+if YEAR:
+    last_m = max((m for m in range(1, 13) if by_month[m] > 0), default=12)
+    last_v = by_month[last_m]
+    last_priv = round(last_v * priv_ratio)
+    last_pub = last_v - last_priv
+    seg_priv, seg_pub = last_priv * scale, last_pub * scale
+else:
+    last = years[-1]
+    seg_priv, seg_pub = PRIV[last] * scale, (by_year[last] - PRIV[last]) * scale
 priv_y = base - seg_priv / 2
 pub_y = min(base - seg_priv - seg_pub / 2, priv_y - 44)
 mx_ = x1 + 10
 text(mx_, pub_y - 34, "contributions", 13, T["muted"])
-text(mx_, pub_y - 18, "per year", 13, T["muted"])
+text(mx_, pub_y - 18, "per month" if YEAR else "per year", 13, T["muted"])
 add(f'<rect x="{mx_}" y="{pub_y - 9}" width="12" height="12" fill="{T["pub"]}"/>')
 text(mx_ + 18, pub_y + 2, "public", 15, T["fg"])
 add(f'<rect x="{mx_}" y="{priv_y - 9}" width="12" height="12" fill="{T["priv"]}"/>')
 text(mx_ + 18, priv_y + 2, "private", 15, T["fg"])
-text(mx_ + 18, priv_y + 19, "counts only", 12, T["muted"])
+text(mx_ + 18, priv_y + 19, "estimated" if YEAR else "counts only", 12, T["muted"])
 
 # Language legend
 ly = la_bottom + 40
@@ -371,16 +442,9 @@ if layers:
     else:
         text(x0, ly, "measured from git history", 16, T["muted"])
 
-# Lifetime heatmap: two columns of years, GitHub-style week x weekday grid.
+# Lifetime heatmap: week x weekday grid.
 hm_top = ly + 130
 text(M, hm_top - 40, "EVERY DAY", 22, T["bright"], weight=600, extra='letter-spacing="3"')
-cell, gap = 10, 2.6
-pitch = cell + gap
-block_w = 54 * pitch
-col_x = [M + 70, W - M - block_w]
-assert col_x[0] + block_w + 60 < col_x[1], "heatmap columns overlap"
-rows_per_col = 10
-block_h = 7 * pitch + 28
 
 BINS = list(zip([0, 1, 3, 6, 11, 21], T["bins"]))
 def color(c):
@@ -389,32 +453,71 @@ def color(c):
         if c >= lo: col = cc
     return col
 
-for i, y in enumerate(years):
-    cx = col_x[i // rows_per_col]
-    cy = hm_top + (i % rows_per_col) * block_h
-    text(cx - 16, cy + 3.5 * pitch + 6, str(y), 18, T["fg"], "end", family=MONO)
-    jan1 = dt.date(y, 1, 1)
+if YEAR:
+    cell, gap = 22, 5
+    pitch = cell + gap
+    block_w = 54 * pitch
+    cx = M + 70
+    cy = hm_top + 28
+    text(cx - 16, cy + 3.5 * pitch + 6, str(YEAR), 18, T["fg"], "end", family=MONO)
+    jan1 = dt.date(YEAR, 1, 1)
     start = jan1 - dt.timedelta(days=(jan1.weekday() + 1) % 7)  # Sunday on/before Jan 1
+    for m in range(1, 13):
+        first_d = dt.date(YEAR, m, 1)
+        first_wk = (first_d - start).days // 7
+        text(cx + first_wk * pitch + 2, cy - 10, MONTHS[m - 1], 14, T["muted"], family=MONO)
     d = jan1
-    while d.year == y:
+    while d.year == YEAR:
         key = d.isoformat()
         if key > AS_OF: break
         wk = (d - start).days // 7
         dow = (d.weekday() + 1) % 7
-        add(f'<rect x="{cx + wk * pitch:.1f}" y="{cy + dow * pitch:.1f}" width="{cell}" height="{cell}" rx="2" '
+        add(f'<rect x="{cx + wk * pitch:.1f}" y="{cy + dow * pitch:.1f}" width="{cell}" height="{cell}" rx="3" '
             f'fill="{color(by_day.get(key, 0))}"{tag("day", d=key, c=by_day.get(key, 0))}/>')
         d += dt.timedelta(days=1)
 
-# Heatmap legend, bottom right of second column
-lx, lyy = col_x[1] + block_w - 6 * (pitch + 2) - 200, hm_top + 9 * block_h + 26
-text(lx - 10, lyy + 10, "less", 15, T["muted"], "end")
-for j, (_, cc) in enumerate(BINS):
-    add(f'<rect x="{lx + j * (pitch + 2):.1f}" y="{lyy}" width="{cell}" height="{cell}" rx="2" fill="{cc}"/>')
-text(lx + 6 * (pitch + 2) + 6, lyy + 10, "more  (0 · 1 · 3 · 6 · 11 · 21+)", 15, T["muted"])
+    # Heatmap legend
+    lx, lyy = cx + block_w - 6 * 20 - 40, cy + 7 * pitch + 32
+    text(lx - 10, lyy + 12, "less", 15, T["muted"], "end")
+    for j, (_, cc) in enumerate(BINS):
+        add(f'<rect x="{lx + j * 20:.1f}" y="{lyy}" width="16" height="16" rx="2" fill="{cc}"/>')
+    text(lx + 6 * 20 + 6, lyy + 12, "more  (0 · 1 · 3 · 6 · 11 · 21+)", 15, T["muted"])
+    H = cy + 7 * pitch + 150
+else:
+    cell, gap = 10, 2.6
+    pitch = cell + gap
+    block_w = 54 * pitch
+    col_x = [M + 70, W - M - block_w]
+    assert col_x[0] + block_w + 60 < col_x[1], "heatmap columns overlap"
+    rows_per_col = 10
+    block_h = 7 * pitch + 28
+
+    for i, y in enumerate(years):
+        cx = col_x[i // rows_per_col]
+        cy = hm_top + (i % rows_per_col) * block_h
+        text(cx - 16, cy + 3.5 * pitch + 6, str(y), 18, T["fg"], "end", family=MONO)
+        jan1 = dt.date(y, 1, 1)
+        start = jan1 - dt.timedelta(days=(jan1.weekday() + 1) % 7)  # Sunday on/before Jan 1
+        d = jan1
+        while d.year == y:
+            key = d.isoformat()
+            if key > AS_OF: break
+            wk = (d - start).days // 7
+            dow = (d.weekday() + 1) % 7
+            add(f'<rect x="{cx + wk * pitch:.1f}" y="{cy + dow * pitch:.1f}" width="{cell}" height="{cell}" rx="2" '
+                f'fill="{color(by_day.get(key, 0))}"{tag("day", d=key, c=by_day.get(key, 0))}/>')
+            d += dt.timedelta(days=1)
+
+    # Heatmap legend, bottom right of second column
+    lx, lyy = col_x[1] + block_w - 6 * (pitch + 2) - 200, hm_top + 9 * block_h + 26
+    text(lx - 10, lyy + 10, "less", 15, T["muted"], "end")
+    for j, (_, cc) in enumerate(BINS):
+        add(f'<rect x="{lx + j * (pitch + 2):.1f}" y="{lyy}" width="{cell}" height="{cell}" rx="2" fill="{cc}"/>')
+    text(lx + 6 * (pitch + 2) + 6, lyy + 10, "more  (0 · 1 · 3 · 6 · 11 · 21+)", 15, T["muted"])
+    H = hm_top + 10 * block_h + 170
 
 # Footer
-H = hm_top + 10 * block_h + 170
-chart_meta = tag("poster", login=LOGIN, theme=THEME, x0=x0, bw=f"{bw:.3f}", y0=years[0], months=len(month_keys),
+chart_meta = tag("poster", login=LOGIN, theme=THEME, year=YEAR or "", x0=x0, bw=f"{bw_year:.3f}", y0=years[0], months=len(month_keys),
                  latop=la_top, lah=la_h, bg=T["bg"], fg=T["fg"], bright=T["bright"], muted=T["muted"], band=T["band"])
 out.insert(0, f'<svg xmlns="http://www.w3.org/2000/svg" width="{W}" height="{H}" viewBox="0 0 {W} {H}"{chart_meta}>\n'
               f'<rect width="{W}" height="{H}" fill="{T["bg"]}"/>')
@@ -422,7 +525,8 @@ text(M, H - 70, f"Source: GitHub GraphQL API, fetched {AS_OF}. Private-repo acti
 text(W - M, H - 70, f"github.com/{LOGIN}", 16, T["fg"], "end", family=MONO)
 add("</svg>")
 
-svg = args.out or HERE / "output" / f"{LOGIN}-github-all-time-{THEME}.svg"
+period = str(YEAR) if YEAR else "all-time"
+svg = args.out or HERE / "output" / f"{LOGIN}-github-{period}-{THEME}.svg"
 svg.parent.mkdir(exist_ok=True)
 svg.write_text("\n".join(out))
 print(f"wrote {svg} ({total:,} contributions)")

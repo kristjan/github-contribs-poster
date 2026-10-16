@@ -14,45 +14,24 @@
 # Delete every entry (or this file) to render the poster with no eras.
 
 eras:
-  - title: Causes
-    subtitle: Lead Developer
-    start: 2008
-    end: 2010-10
-    languages: {Ruby: 60, JavaScript: 25, CSS: 15}
+  - title: Example Startup
+    subtitle: Software Engineer
+    start: 2010
+    end: 2013-06
+    languages: {Python: 70, JavaScript: 30}
 
-  - title: Gowalla
-    subtitle: Lead Developer
-    start: 2010-11
-    end: 2011
-    languages: {Ruby: 80, JavaScript: 20}
+  - title: Acme Corp
+    subtitle: Senior Developer
+    start: 2013-07
+    end: 2018-12
+    languages: {Ruby: 60, TypeScript: 40}
 
-  - title: [Return Path, Uncommon]
+  - title: Global Tech
     subtitle: Director, Engineering
-    start: 2012
-    end: 2014-04
-    languages: {Ruby: 60, CoffeeScript: 25, CSS: 15}
+    start: 2019
+    end: 2023-08
+    languages: {Go: 50, Rust: 30, TypeScript: 20}
 
-  - title: Last Guide
+  - title: Current Labs
     subtitle: Head of Engineering
-    start: 2014-05
-    end: 2014-11
-    languages: {Ruby: 100}
-
-  - title: Under Armour
-    subtitle: Manager–Director, Engineering
-    start: 2015
-    end: 2020-08
-    languages: {Python: 50, Ruby: 30, JavaScript: 20}
-
-  - title: SailPoint
-    subtitle: Director–Sr. Director, Engineering
-    start: 2020-09
-    end: 2023-07
-
-  - title: Praxis
-    start: 2023-08
-    end: 2023-12
-
-  - title: OMC
-    subtitle: COO & Head of Product/Engineering
-    start: 2024
+    start: 2023-09
